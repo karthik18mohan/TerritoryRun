@@ -54,9 +54,11 @@ export default function PlayPage() {
   const [profileUsername, setProfileUsername] = useState<string>("Runner");
   const { status, points, setPoints, startTracking, stopTracking, clearStoredPoints } =
     useGeolocationTracking();
+  const lastLiveUpdateRef = useRef<number>(0);
 
   const { territories } = useRealtimeTerritories(city?.id);
   const { players } = useLivePlayers(city?.id, liveMode);
+  const displayTrailPoints = useMemo(() => points.slice(-500), [points]);
 
   const elapsedSeconds = useMemo(() => {
     if (!points.length) return 0;
@@ -89,6 +91,9 @@ export default function PlayPage() {
   const upsertLive = useCallback(
     async (lastPoint: TrackPoint) => {
       if (!liveMode || !sessionId || !city) return;
+      const now = Date.now();
+      if (now - lastLiveUpdateRef.current < 2000) return;
+      lastLiveUpdateRef.current = now;
       const session = await supabase.auth.getSession();
       if (!session.data.session?.user) return;
       const trail = points.slice(-50);
@@ -295,13 +300,21 @@ export default function PlayPage() {
               styleOption={styleOption}
               territories={territories}
               livePlayers={players}
-              trailPoints={points}
+              trailPoints={displayTrailPoints}
               showLive={liveMode}
             />
           </div>
 
           <section className="glass flex flex-col gap-4 rounded-3xl p-6">
-            <div className="text-sm text-white/60">Tracking Controls</div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm text-white/60">Tracking Controls</div>
+                <div className="text-xs text-white/40">Low-latency live updates</div>
+              </div>
+              <div className="rounded-full bg-white/5 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-white/60">
+                {status.isTracking ? "Active" : "Idle"}
+              </div>
+            </div>
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setMode("walk_run")}
@@ -333,10 +346,12 @@ export default function PlayPage() {
               </button>
             </div>
 
-            <div className="rounded-2xl bg-white/5 p-4 text-xs space-y-2">
+            <div className="grid gap-3 rounded-2xl bg-white/5 p-4 text-xs sm:grid-cols-2">
               <div className="flex items-center justify-between">
                 <span>Elapsed</span>
-                <span>{Math.floor(elapsedSeconds / 60)}m {elapsedSeconds % 60}s</span>
+                <span>
+                  {Math.floor(elapsedSeconds / 60)}m {elapsedSeconds % 60}s
+                </span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Points</span>
@@ -352,9 +367,11 @@ export default function PlayPage() {
                   {loopClosed ? "Yes" : "No"}
                 </span>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between sm:col-span-2">
                 <span>Snapped</span>
-                <span>{snappedCount} / {snappedCount + unsnappedCount}</span>
+                <span>
+                  {snappedCount} / {snappedCount + unsnappedCount}
+                </span>
               </div>
             </div>
 

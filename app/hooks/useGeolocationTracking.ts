@@ -35,6 +35,7 @@ export const useGeolocationTracking = () => {
   const watcherId = useRef<number | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const persistTimer = useRef<NodeJS.Timeout | null>(null);
+  const pointsRef = useRef<TrackPoint[]>([]);
 
   const persistPoints = useCallback((current: TrackPoint[]) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(current));
@@ -53,6 +54,10 @@ export const useGeolocationTracking = () => {
   useEffect(() => {
     setPoints(hydrate());
   }, [hydrate]);
+
+  useEffect(() => {
+    pointsRef.current = points;
+  }, [points]);
 
   const stopWatch = useCallback(() => {
     if (watcherId.current !== null) {
@@ -86,32 +91,66 @@ export const useGeolocationTracking = () => {
       setStatus((prev) => ({ ...prev, error: "Geolocation not supported." }));
       return;
     }
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setStatus((prev) => ({
+        ...prev,
+        error: "Geolocation requires HTTPS or localhost."
+      }));
+      return;
+    }
+    if (watcherId.current !== null) return;
+
     setStatus((prev) => ({ ...prev, isTracking: true, paused: false, error: undefined }));
     requestWakeLock();
 
-    watcherId.current = navigator.geolocation.watchPosition(
-      (position) => {
-        const newPoint: TrackPoint = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          ts: new Date(position.timestamp).toISOString(),
-          accuracy: position.coords.accuracy,
-          speed: position.coords.speed
-        };
-        setPoints((prev) => {
-          const next = [...prev, newPoint];
-          return next;
-        });
-      },
-      (error) => {
-        setStatus((prev) => ({ ...prev, error: error.message }));
-      },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 0,
-        timeout: 10000
-      }
-    );
+    const beginWatch = () => {
+      watcherId.current = navigator.geolocation.watchPosition(
+        (position) => {
+          const newPoint: TrackPoint = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+            ts: new Date(position.timestamp).toISOString(),
+            accuracy: position.coords.accuracy,
+            speed: position.coords.speed
+          };
+          setPoints((prev) => [...prev, newPoint]);
+        },
+        (error) => {
+          stopWatch();
+          setStatus((prev) => ({
+            ...prev,
+            isTracking: false,
+            paused: false,
+            error: error.message
+          }));
+        },
+        {
+          enableHighAccuracy: true,
+          maximumAge: 0,
+          timeout: 15000
+        }
+      );
+    };
+
+    if ("permissions" in navigator && navigator.permissions?.query) {
+      navigator.permissions
+        .query({ name: "geolocation" })
+        .then((result) => {
+          if (result.state === "denied") {
+            setStatus((prev) => ({
+              ...prev,
+              isTracking: false,
+              paused: false,
+              error: "Location permission denied."
+            }));
+            return;
+          }
+          beginWatch();
+        })
+        .catch(beginWatch);
+    } else {
+      beginWatch();
+    }
   }, [requestWakeLock]);
 
   const stopTracking = useCallback(() => {
@@ -147,7 +186,7 @@ export const useGeolocationTracking = () => {
   useEffect(() => {
     if (!status.isTracking) return undefined;
     persistTimer.current = setInterval(() => {
-      persistPoints(points);
+      persistPoints(pointsRef.current);
     }, 3000);
     return () => {
       if (persistTimer.current) clearInterval(persistTimer.current);
