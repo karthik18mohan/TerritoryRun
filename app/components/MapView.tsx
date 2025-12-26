@@ -2,7 +2,7 @@
 
 import maplibregl, { GeoJSONSource, LngLatLike } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getStyleConfig, MapStyleOption } from "@/app/lib/mapStyles";
 import type { Territory } from "@/app/hooks/useRealtimeTerritories";
 import type { LivePlayer } from "@/app/hooks/useLivePlayers";
@@ -61,31 +61,16 @@ export const MapView = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [styleReady, setStyleReady] = useState(false);
   const styleConfig = useMemo(() => getStyleConfig(styleOption), [styleOption]);
+  const lastStyleRef = useRef(styleConfig.style);
 
-  useEffect(() => {
-    if (!containerRef.current) return;
-
-    if (mapRef.current) {
-      mapRef.current.remove();
-      mapRef.current = null;
-      setStyleReady(false);
-    }
-
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: styleConfig.style as maplibregl.StyleSpecification,
-      center: center as LngLatLike,
-      zoom
-    });
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
-
-    map.on("load", () => {
-      setStyleReady(true);
+  const addSourcesAndLayers = useCallback((map: maplibregl.Map) => {
+    if (!map.getSource("territories")) {
       map.addSource("territories", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] }
       });
+    }
+    if (!map.getLayer("territory-fill")) {
       map.addLayer({
         id: "territory-fill",
         type: "fill",
@@ -95,6 +80,8 @@ export const MapView = ({
           "fill-opacity": 0.35
         }
       });
+    }
+    if (!map.getLayer("territory-outline")) {
       map.addLayer({
         id: "territory-outline",
         type: "line",
@@ -104,11 +91,15 @@ export const MapView = ({
           "line-width": 2
         }
       });
+    }
 
+    if (!map.getSource("trail")) {
       map.addSource("trail", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] }
       });
+    }
+    if (!map.getLayer("trail-line")) {
       map.addLayer({
         id: "trail-line",
         type: "line",
@@ -118,6 +109,8 @@ export const MapView = ({
           "line-width": 4
         }
       });
+    }
+    if (!map.getLayer("trail-start")) {
       map.addLayer({
         id: "trail-start",
         type: "circle",
@@ -130,32 +123,94 @@ export const MapView = ({
         },
         filter: ["==", ["get", "type"], "start"]
       });
+    }
 
+    if (!map.getSource("live")) {
       map.addSource("live", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] }
       });
+    }
+    if (!map.getLayer("live-points")) {
       map.addLayer({
         id: "live-points",
         type: "circle",
         source: "live",
         paint: {
           "circle-radius": 5,
-          "circle-color": "#a855f7"
+          "circle-color": "#a855f7",
+          "circle-stroke-color": "#f5d0fe",
+          "circle-stroke-width": 1.5
         }
       });
+    }
+    if (!map.getLayer("live-labels")) {
+      map.addLayer({
+        id: "live-labels",
+        type: "symbol",
+        source: "live",
+        layout: {
+          "text-field": ["get", "username"],
+          "text-size": 12,
+          "text-offset": [0, 1.2]
+        },
+        paint: {
+          "text-color": "#f5d0fe",
+          "text-halo-color": "#1f0a33",
+          "text-halo-width": 1.2
+        }
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: containerRef.current,
+      style: styleConfig.style as maplibregl.StyleSpecification,
+      center: center as LngLatLike,
+      zoom
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }));
+    map.once("load", () => {
+      setStyleReady(true);
+      addSourcesAndLayers(map);
     });
 
     mapRef.current = map;
-  }, [center, styleConfig.style, zoom]);
+    lastStyleRef.current = styleConfig.style;
+  }, [addSourcesAndLayers, center, styleConfig.style, zoom]);
 
   useEffect(() => {
-    if (!mapRef.current) return;
-    if (!styleReady) return;
+    return () => {
+      mapRef.current?.remove();
+      mapRef.current = null;
+    };
+  }, []);
 
+  useEffect(() => {
     const map = mapRef.current;
-    const territoriesSource = map.getSource("territories") as GeoJSONSource;
-    const features = territories
+    if (!map) return;
+    map.jumpTo({ center: center as LngLatLike, zoom });
+  }, [center, zoom]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (lastStyleRef.current === styleConfig.style) return;
+    setStyleReady(false);
+    map.setStyle(styleConfig.style as maplibregl.StyleSpecification);
+    map.once("style.load", () => {
+      addSourcesAndLayers(map);
+      setStyleReady(true);
+    });
+    lastStyleRef.current = styleConfig.style;
+  }, [addSourcesAndLayers, styleConfig.style]);
+
+  const territoryFeatures = useMemo(() => {
+    return territories
       .map((territory) => {
         const geom = parseGeoJson(territory.geom_simplified);
         if (!geom) return null;
@@ -169,14 +224,20 @@ export const MapView = ({
           }
         };
       })
-      .filter(Boolean);
+      .filter(Boolean) as Feature<Geometry>[];
+  }, [territories]);
 
+  useEffect(() => {
+    if (!mapRef.current || !styleReady) return;
+
+    const map = mapRef.current;
+    const territoriesSource = map.getSource("territories") as GeoJSONSource;
     const fc: FeatureCollection = {
       type: "FeatureCollection",
-      features: features as Feature<Geometry>[]
+      features: territoryFeatures
     };
     territoriesSource?.setData(fc);
-  }, [styleReady, territories]);
+  }, [styleReady, territoryFeatures]);
 
   useEffect(() => {
     if (!mapRef.current || !styleReady) return;
@@ -226,7 +287,7 @@ export const MapView = ({
   }, [livePlayers, showLive, styleReady]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-3xl border border-white/10 shadow-neon">
+    <div className="relative h-full w-full overflow-hidden rounded-3xl border border-white/10 bg-slate-950 shadow-neon">
       {!styleConfig.available && (
         <div className="absolute left-4 top-4 z-10 rounded-full bg-red-500/80 px-4 py-2 text-xs text-white">
           Satellite unavailable
