@@ -7,6 +7,7 @@ import { getStyleConfig, MapStyleOption } from "@/app/lib/mapStyles";
 import type { Territory } from "@/app/hooks/useRealtimeTerritories";
 import type { LivePlayer } from "@/app/hooks/useLivePlayers";
 import type { TrackPoint } from "@/app/hooks/useGeolocationTracking";
+import type { Feature, FeatureCollection, Geometry } from "geojson";
 
 const parseGeoJson = (raw?: string | null) => {
   if (!raw) return null;
@@ -170,10 +171,11 @@ export const MapView = ({
       })
       .filter(Boolean);
 
-    territoriesSource?.setData({
+    const fc: FeatureCollection = {
       type: "FeatureCollection",
-      features: features as maplibregl.GeoJSONFeature[]
-    });
+      features: features as Feature<Geometry>[]
+    };
+    territoriesSource?.setData(fc);
   }, [styleReady, territories]);
 
   useEffect(() => {
@@ -193,7 +195,7 @@ export const MapView = ({
 
     trailSource?.setData({
       type: "FeatureCollection",
-      features: features as maplibregl.GeoJSONFeature[]
+      features: features as Feature<Geometry>[]
     });
   }, [styleReady, trailPoints]);
 
@@ -219,7 +221,7 @@ export const MapView = ({
 
     liveSource?.setData({
       type: "FeatureCollection",
-      features: features as maplibregl.GeoJSONFeature[]
+      features: features as Feature<Geometry>[]
     });
   }, [livePlayers, showLive, styleReady]);
 
