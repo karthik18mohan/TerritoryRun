@@ -13,6 +13,16 @@ export type Territory = {
   owner_username?: string | null;
 };
 
+type TerritoryRow = {
+  id: string;
+  owner_user_id: string;
+  city_id: string;
+  geom_simplified: string | null | { geom_simplified: string | null }[];
+  area_m2: number | null;
+  updated_at: string;
+  profiles?: { username?: string | null }[] | null;
+};
+
 export const useRealtimeTerritories = (cityId?: string) => {
   const [territories, setTerritories] = useState<Territory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,12 +45,22 @@ export const useRealtimeTerritories = (cityId?: string) => {
         setLoading(false);
         return;
       }
-      const mapped =
-        data?.map((row) => ({
-          ...row,
-          owner_username: (row as { profiles?: { username?: string } }).profiles?.username
-        })) ?? [];
-      setTerritories(mapped as Territory[]);
+      const mappedTerritories: Territory[] =
+        data?.map((row: TerritoryRow): Territory => {
+          const geom_simplified = Array.isArray(row.geom_simplified)
+            ? row.geom_simplified[0]?.geom_simplified ?? null
+            : row.geom_simplified ?? null;
+          return {
+            id: row.id,
+            owner_user_id: row.owner_user_id,
+            city_id: row.city_id,
+            geom_simplified,
+            area_m2: row.area_m2,
+            updated_at: row.updated_at,
+            owner_username: row.profiles?.[0]?.username ?? null
+          };
+        }) ?? [];
+      setTerritories(mappedTerritories);
       setLoading(false);
     };
 
