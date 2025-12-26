@@ -8,6 +8,26 @@ type StyleConfig = {
   available: boolean;
 };
 
+const buildRasterStyle = (tiles: string[]): StyleSpecification => ({
+  version: 8,
+  sources: {
+    raster: {
+      type: "raster",
+      tiles,
+      tileSize: 256
+    }
+  },
+  layers: [
+    {
+      id: "raster",
+      type: "raster",
+      source: "raster"
+    }
+  ]
+});
+
+const isStyleUrl = (styleUrl: string) => styleUrl.endsWith(".json");
+
 const withToken = (styleUrl: string, token: string) => {
   if (styleUrl.includes("access_token=")) return styleUrl;
   const joiner = styleUrl.includes("?") ? "&" : "?";
@@ -44,49 +64,25 @@ export const getStyleConfig = (style: MapStyleOption): StyleConfig => {
   }
 
   if (style === "street") {
+    const fallback = streetStyle ?? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
     return {
       name: "Street",
-      style: {
-        version: 8,
-        sources: {
-          osm: {
-            type: "raster",
-            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
-            tileSize: 256
-          }
-        },
-        layers: [
-          {
-            id: "osm",
-            type: "raster",
-            source: "osm"
-          }
-        ]
-      },
+      style: isStyleUrl(fallback)
+        ? fallback
+        : buildRasterStyle([fallback, "https://tile.openstreetmap.org/{z}/{x}/{y}.png"]),
       available: true
     };
   }
 
-  if (satelliteStyle) {
+  const fallbackSatellite =
+    satelliteStyle ??
+    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+  if (fallbackSatellite) {
     return {
       name: "Satellite",
-      style: {
-        version: 8,
-        sources: {
-          satellite: {
-            type: "raster",
-            tiles: [satelliteStyle],
-            tileSize: 256
-          }
-        },
-        layers: [
-          {
-            id: "satellite",
-            type: "raster",
-            source: "satellite"
-          }
-        ]
-      },
+      style: isStyleUrl(fallbackSatellite)
+        ? fallbackSatellite
+        : buildRasterStyle([fallbackSatellite]),
       available: true
     };
   }
