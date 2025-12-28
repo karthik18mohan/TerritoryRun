@@ -37,7 +37,7 @@ export const useRealtimeTerritories = (cityId?: string) => {
       const { data, error } = await supabase
         .from("territories")
         .select(
-          "id, owner_user_id, city_id, area_m2, updated_at, geom_simplified:st_asgeojson(geom_simplified), profiles(username)"
+          "id, owner_user_id, city_id, area_m2, updated_at, geom_simplified:st_asgeojson(geom_simplified), profiles!territories_owner_user_id_fkey(username)"
         )
         .eq("city_id", cityId);
       if (!active) return;
