@@ -33,6 +33,13 @@ const MODE_CONFIG = {
   cycle: { minPerimeter: 1000 }
 };
 
+const buildPolygonWkt = (points: TrackPoint[]) => {
+  if (points.length < 3) return null;
+  const coordinates = points.map((point) => `${point.lng} ${point.lat}`);
+  const closed = [...coordinates, coordinates[0]];
+  return `MULTIPOLYGON(((${closed.join(",")})))`;
+};
+
 const buildLineStringWkt = (points: TrackPoint[]) => {
   if (!points.length) return null;
   const path = points.map((point) => `${point.lng} ${point.lat}`).join(",");
@@ -52,6 +59,8 @@ export default function PlayPage() {
   const [loopClosed, setLoopClosed] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [profileUsername, setProfileUsername] = useState<string>("Runner");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [geoPermission, setGeoPermission] = useState<PermissionState | "unknown">("unknown");
   const { status, points, setPoints, startTracking, stopTracking, clearStoredPoints } =
     useGeolocationTracking();
   const lastLiveUpdateRef = useRef<number>(0);
@@ -59,6 +68,10 @@ export default function PlayPage() {
   const { territories } = useRealtimeTerritories(city?.id);
   const { players } = useLivePlayers(city?.id, liveMode);
   const displayTrailPoints = useMemo(() => points.slice(-500), [points]);
+  const lastPoint = points[points.length - 1];
+  const lastPointAgeSeconds = lastPoint
+    ? Math.max(0, Math.round((Date.now() - new Date(lastPoint.ts).getTime()) / 1000))
+    : null;
 
   const elapsedSeconds = useMemo(() => {
     if (!points.length) return 0;
@@ -127,7 +140,13 @@ export default function PlayPage() {
         speed_mps: point.speed ?? null
       });
       if (error) {
-        setStatusMessage("Point outside city boundary. Ignored.");
+        if (process.env.NODE_ENV !== "production") {
+          console.log("Point insert failed", error);
+        }
+        const message = error.message.includes("Point outside city boundary")
+          ? "Point outside city boundary. Ignored."
+          : `Point save failed: ${error.message}`;
+        setStatusMessage(message);
       }
     },
     [sessionId, setStatusMessage, supabase]
@@ -157,6 +176,20 @@ export default function PlayPage() {
     };
     loadCity();
   }, [router, supabase]);
+
+  useEffect(() => {
+    if (!("permissions" in navigator) || !navigator.permissions?.query) {
+      setGeoPermission("unknown");
+      return;
+    }
+    navigator.permissions
+      .query({ name: "geolocation" })
+      .then((result) => {
+        setGeoPermission(result.state);
+        result.onchange = () => setGeoPermission(result.state);
+      })
+      .catch(() => setGeoPermission("unknown"));
+  }, []);
 
   useEffect(() => {
     if (!status.isTracking) return;
@@ -219,8 +252,17 @@ export default function PlayPage() {
       })
       .select("id")
       .single();
-    if (!error && data) setSessionId(data.id);
-    startTracking();
+    if (error) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Session start failed", error);
+      }
+      setStatusMessage(error.message);
+      return;
+    }
+    if (data) {
+      setSessionId(data.id);
+      startTracking();
+    }
   };
 
   const handleStop = async () => {
@@ -230,19 +272,24 @@ export default function PlayPage() {
     if (!session.session?.user || !city) return;
 
     if (meetsClaimRules) {
-      const polygon = points.map((point) => [point.lng, point.lat]);
-      const response = await fetch("/api/claim", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: session.session.user.id,
-          cityId: city.id,
-          sessionId,
-          polygon
-        })
-      });
-      const result = await response.json();
-      setStatusMessage(result?.message ?? "Claim submitted.");
+      const polygonWkt = buildPolygonWkt(points);
+      if (!polygonWkt) {
+        setStatusMessage("Need at least 3 points to claim.");
+      } else {
+        const { data: claimData, error: claimError } = await supabase.rpc("claim_territory", {
+          p_user_id: session.session.user.id,
+          p_city_id: city.id,
+          p_session_id: sessionId,
+          p_polygon: `SRID=4326;${polygonWkt}`
+        });
+        if (claimError) {
+          setStatusMessage(claimError.message);
+        } else {
+          setStatusMessage(
+            claimData?.message ?? "Territory claimed! Check the map for updates."
+          );
+        }
+      }
     } else {
       setStatusMessage("Loop not closed or requirements unmet.");
     }
@@ -373,6 +420,15 @@ export default function PlayPage() {
                   {snappedCount} / {snappedCount + unsnappedCount}
                 </span>
               </div>
+              {status.isTracking && lastPoint && (
+                <div className="flex items-center justify-between sm:col-span-2">
+                  <span>GPS active</span>
+                  <span>
+                    {lastPointAgeSeconds ?? 0}s ago ·{" "}
+                    {lastPoint.accuracy ? `${Math.round(lastPoint.accuracy)}m` : "n/a"}
+                  </span>
+                </div>
+              )}
             </div>
 
             {status.paused && (
@@ -383,12 +439,46 @@ export default function PlayPage() {
             {status.error && (
               <div className="rounded-2xl bg-red-500/20 px-4 py-3 text-xs text-red-200">
                 {status.error}
+                {status.error.toLowerCase().includes("denied") && (
+                  <div className="mt-2 text-[11px] text-red-100/80">
+                    Enable location access in your browser/app settings, then reload and try
+                    again.
+                  </div>
+                )}
               </div>
             )}
             {!status.wakeLockSupported && (
               <div className="rounded-2xl bg-white/5 px-4 py-3 text-xs text-white/60">
                 Screen Wake Lock unsupported. Keep your screen on to avoid pausing.
               </div>
+            )}
+
+            {(process.env.NODE_ENV !== "production" || showDiagnostics) && (
+              <div className="rounded-2xl bg-white/5 px-4 py-3 text-[11px] text-white/70">
+                <div className="mb-2 text-xs font-semibold text-white">Diagnostics</div>
+                <div className="space-y-1">
+                  <div>Secure context: {String(window.isSecureContext)}</div>
+                  <div>Geolocation supported: {"geolocation" in navigator ? "yes" : "no"}</div>
+                  <div>Permission: {geoPermission}</div>
+                  <div>
+                    Last coords:{" "}
+                    {lastPoint
+                      ? `${lastPoint.lat.toFixed(5)}, ${lastPoint.lng.toFixed(5)}`
+                      : "n/a"}
+                  </div>
+                  <div>Accuracy: {lastPoint?.accuracy ? `${Math.round(lastPoint.accuracy)}m` : "n/a"}</div>
+                  <div>Session ID: {sessionId ?? "none"}</div>
+                </div>
+              </div>
+            )}
+
+            {process.env.NODE_ENV === "production" && (
+              <button
+                className="self-start text-[11px] text-white/50 underline"
+                onClick={() => setShowDiagnostics((prev) => !prev)}
+              >
+                {showDiagnostics ? "Hide diagnostics" : "Diagnostics"}
+              </button>
             )}
 
             <div className="flex flex-col gap-3">

@@ -1,7 +1,6 @@
 "use client";
 
 import maplibregl, { GeoJSONSource, LngLatLike } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getStyleConfig, MapStyleOption } from "@/app/lib/mapStyles";
 import type { Territory } from "@/app/hooks/useRealtimeTerritories";
@@ -60,6 +59,7 @@ export const MapView = ({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [styleReady, setStyleReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
   const styleConfig = useMemo(() => getStyleConfig(styleOption), [styleOption]);
   const lastStyleRef = useRef(styleConfig.style);
 
@@ -178,6 +178,10 @@ export const MapView = ({
       setStyleReady(true);
       addSourcesAndLayers(map);
     });
+    map.on("error", (event) => {
+      const errorMessage = event.error?.message ?? "Map error";
+      setMapError(errorMessage);
+    });
 
     mapRef.current = map;
     lastStyleRef.current = styleConfig.style;
@@ -205,6 +209,7 @@ export const MapView = ({
     map.once("style.load", () => {
       addSourcesAndLayers(map);
       setStyleReady(true);
+      setMapError(null);
     });
     lastStyleRef.current = styleConfig.style;
   }, [addSourcesAndLayers, styleConfig.style]);
@@ -291,6 +296,11 @@ export const MapView = ({
       {!styleConfig.available && (
         <div className="absolute left-4 top-4 z-10 rounded-full bg-red-500/80 px-4 py-2 text-xs text-white">
           Satellite unavailable
+        </div>
+      )}
+      {mapError && (
+        <div className="absolute right-4 top-4 z-10 rounded-full bg-amber-500/80 px-4 py-2 text-[10px] text-white">
+          Map error{process.env.NODE_ENV !== "production" ? `: ${mapError}` : ""}
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" />

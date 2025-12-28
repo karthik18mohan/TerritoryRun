@@ -175,17 +175,37 @@ security definer
 as $$
 declare
   v_city_boundary geometry(MULTIPOLYGON, 4326);
+  v_city_lat double precision;
+  v_city_lng double precision;
   v_session_mode text;
   v_polygon geometry(MULTIPOLYGON, 4326);
   v_perimeter_m double precision;
   v_min_perimeter double precision;
   v_claim_area double precision;
 begin
-  select boundary_geom into v_city_boundary from public.cities where id = p_city_id;
+  if auth.uid() is null then
+    raise exception 'Unauthorized';
+  end if;
+
+  if auth.uid() <> p_user_id then
+    raise exception 'User mismatch';
+  end if;
+
+  select boundary_geom, center_lat, center_lng
+    into v_city_boundary, v_city_lat, v_city_lng
+    from public.cities
+    where id = p_city_id;
   select mode into v_session_mode from public.sessions where id = p_session_id;
 
   if v_city_boundary is null then
-    raise exception 'City boundary not found';
+    if v_city_lat is null or v_city_lng is null then
+      raise exception 'City boundary not found';
+    end if;
+    v_city_boundary :=
+      ST_Buffer(ST_SetSRID(ST_Point(v_city_lng, v_city_lat), 4326)::geography, 15000)::geometry;
+    update public.cities
+      set boundary_geom = v_city_boundary
+      where id = p_city_id;
   end if;
 
   v_polygon := ST_MakeValid(ST_Intersection(p_polygon, v_city_boundary));

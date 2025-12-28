@@ -55,16 +55,17 @@ Create a `.env.local` file:
 ```
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
 NEXT_PUBLIC_MAPBOX_TOKEN=
 NEXT_PUBLIC_MAP_STYLE_STREET=
 NEXT_PUBLIC_MAP_STYLE_SATELLITE=
 OSRM_BASE_URL=https://router.project-osrm.org
+OSRM_PROFILE_WALK=walking
+OSRM_PROFILE_CYCLE=cycling
 ```
 
 **Notes:**
-- If no Mapbox token is provided, the map falls back to OSM street tiles. Satellite will be disabled unless you provide `NEXT_PUBLIC_MAP_STYLE_SATELLITE` (raster tile URL).
-- `SUPABASE_SERVICE_ROLE_KEY` is required for `/api/claim`.
+- If no Mapbox token is provided, the map falls back to proxied OSM/Esri raster tiles (no keys required).
+- `NEXT_PUBLIC_MAP_STYLE_STREET` / `NEXT_PUBLIC_MAP_STYLE_SATELLITE` can be either a MapLibre style JSON URL or a raster tile URL template.
 
 ### Run locally
 
@@ -87,6 +88,9 @@ supabase db reset
 1. Push your repo to GitHub.
 2. Create a new Vercel project and import the repo.
 3. Set the environment variables from `.env.local` in the Vercel dashboard.
+   - Required: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - Optional: `NEXT_PUBLIC_MAPBOX_TOKEN`, `NEXT_PUBLIC_MAP_STYLE_STREET`, `NEXT_PUBLIC_MAP_STYLE_SATELLITE`,
+     `OSRM_BASE_URL`, `OSRM_PROFILE_WALK`, `OSRM_PROFILE_CYCLE`
 4. Deploy.
 
 ---

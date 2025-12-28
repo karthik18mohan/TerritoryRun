@@ -43,6 +43,8 @@ export const getStyleConfig = (style: MapStyleOption): StyleConfig => {
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
   const streetStyle = process.env.NEXT_PUBLIC_MAP_STYLE_STREET;
   const satelliteStyle = process.env.NEXT_PUBLIC_MAP_STYLE_SATELLITE;
+  const defaultStreetRaster = "/api/tiles/osm/{z}/{x}/{y}.png";
+  const defaultSatelliteRaster = "/api/tiles/esri/{z}/{x}/{y}.png";
 
   if (mapboxToken) {
     const street = mapboxStyleToHttps(streetStyle ?? "mapbox://styles/mapbox/streets-v12");
@@ -64,36 +66,23 @@ export const getStyleConfig = (style: MapStyleOption): StyleConfig => {
   }
 
   if (style === "street") {
-    const fallback = streetStyle ?? "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+    const fallback = streetStyle ?? defaultStreetRaster;
     return {
       name: "Street",
       style: isStyleUrl(fallback)
         ? fallback
-        : buildRasterStyle([fallback, "https://tile.openstreetmap.org/{z}/{x}/{y}.png"]),
+        : buildRasterStyle([fallback]),
       available: true
     };
   }
 
-  const fallbackSatellite =
-    satelliteStyle ??
-    "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-  if (fallbackSatellite) {
-    return {
-      name: "Satellite",
-      style: isStyleUrl(fallbackSatellite)
-        ? fallbackSatellite
-        : buildRasterStyle([fallbackSatellite]),
-      available: true
-    };
-  }
-
+  const fallbackSatellite = satelliteStyle ?? defaultSatelliteRaster;
   return {
     name: "Satellite",
-    style: {
-      version: 8,
-      sources: {},
-      layers: []
-    },
-    available: false
+    style: isStyleUrl(fallbackSatellite)
+      ? fallbackSatellite
+      : buildRasterStyle([fallbackSatellite]),
+    available: true
   };
+
 };
