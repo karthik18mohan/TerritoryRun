@@ -6,6 +6,7 @@ import { MapView } from "@/app/components/MapView";
 import { useGeolocationTracking, TrackPoint, TrackingMode } from "@/app/hooks/useGeolocationTracking";
 import { useRealtimeTerritories } from "@/app/hooks/useRealtimeTerritories";
 import { useLivePlayers } from "@/app/hooks/useLivePlayers";
+import { getStoredProfile, LocalProfile } from "@/app/lib/localProfile";
 import { supabaseBrowser } from "@/app/lib/supabaseClient";
 
 const haversineDistance = (a: TrackPoint, b: TrackPoint) => {
@@ -58,6 +59,7 @@ export default function PlayPage() {
   const [unsnappedCount, setUnsnappedCount] = useState(0);
   const [loopClosed, setLoopClosed] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [profileUsername, setProfileUsername] = useState<string>("Runner");
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [geoPermission, setGeoPermission] = useState<PermissionState | "unknown">("unknown");
@@ -134,8 +136,7 @@ export default function PlayPage() {
       const now = Date.now();
       if (now - lastLiveUpdateRef.current < 2000) return;
       lastLiveUpdateRef.current = now;
-      const session = await supabase.auth.getSession();
-      if (!session.data.session?.user) return;
+      if (!profile?.id) return;
       const trail = points.slice(-50).map((point) => {
         const best = getBestCoord(point);
         return { ...point, lat: best.lat, lng: best.lng };
@@ -145,7 +146,7 @@ export default function PlayPage() {
       await supabase
         .from("live_players")
         .upsert({
-          user_id: session.data.session.user.id,
+          user_id: profile.id,
           city_id: city.id,
           username: profileUsername,
           is_live: true,
@@ -154,7 +155,7 @@ export default function PlayPage() {
           last_trail: lineWkt ? `SRID=4326;${lineWkt}` : null
         });
     },
-    [city, getBestCoord, liveMode, points, profileUsername, sessionId, supabase]
+    [city, getBestCoord, liveMode, points, profile, profileUsername, sessionId, supabase]
   );
 
   const [snapError, setSnapError] = useState<string | null>(null);
@@ -235,20 +236,16 @@ export default function PlayPage() {
         return;
       }
       setCity(JSON.parse(stored) as CityInfo);
-      const { data: session } = await supabase.auth.getSession();
-      if (!session.session?.user) {
-        router.replace("/login");
+      const storedProfile = getStoredProfile();
+      if (!storedProfile) {
+        router.replace("/setup");
         return;
       }
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", session.session.user.id)
-        .maybeSingle();
-      if (profile?.username) setProfileUsername(profile.username);
+      setProfile(storedProfile);
+      if (storedProfile.username) setProfileUsername(storedProfile.username);
     };
     loadCity();
-  }, [router, supabase]);
+  }, [router]);
 
   useEffect(() => {
     if (!("permissions" in navigator) || !navigator.permissions?.query) {
@@ -315,12 +312,14 @@ export default function PlayPage() {
   const handleStart = async () => {
     setStatusMessage(null);
     clearStoredPoints();
-    const { data: session } = await supabase.auth.getSession();
-    if (!session.session?.user || !city) return;
+    if (!profile?.id || !city) {
+      setStatusMessage("Missing player profile. Please set a username.");
+      return;
+    }
     const { data, error } = await supabase
       .from("sessions")
       .insert({
-        user_id: session.session.user.id,
+        user_id: profile.id,
         city_id: city.id,
         mode,
         live_mode: liveMode,
@@ -344,8 +343,7 @@ export default function PlayPage() {
   const handleStop = async () => {
     stopTracking();
     if (!sessionId) return;
-    const { data: session } = await supabase.auth.getSession();
-    if (!session.session?.user || !city) return;
+    if (!profile?.id || !city) return;
 
     if (liveMode) {
       await supabase
@@ -355,7 +353,7 @@ export default function PlayPage() {
           updated_at: new Date().toISOString(),
           last_ts: new Date().toISOString()
         })
-        .eq("user_id", session.session.user.id)
+        .eq("user_id", profile.id)
         .eq("city_id", city.id);
     }
 
@@ -365,7 +363,7 @@ export default function PlayPage() {
         setStatusMessage("Need at least 3 points to claim.");
       } else {
         const { data: claimData, error: claimError } = await supabase.rpc("claim_territory", {
-          p_user_id: session.session.user.id,
+          p_user_id: profile.id,
           p_city_id: city.id,
           p_session_id: sessionId,
           p_polygon: `SRID=4326;${polygonWkt}`

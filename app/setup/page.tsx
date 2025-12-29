@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createProfile, getStoredProfile, saveProfile } from "@/app/lib/localProfile";
 import { supabaseBrowser } from "@/app/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 
@@ -13,43 +14,33 @@ export default function SetupPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const load = async () => {
-      const { data: session } = await supabase.auth.getSession();
-      if (!session.session?.user) {
-        router.replace("/login");
-        return;
-      }
-      const { data } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", session.session.user.id)
-        .maybeSingle();
-      if (data?.username) {
-        router.replace("/city");
-        return;
-      }
-      setLoading(false);
-    };
-    load();
-  }, [router, supabase]);
+    const stored = getStoredProfile();
+    if (stored?.username) {
+      router.replace("/city");
+      return;
+    }
+    setLoading(false);
+  }, [router]);
 
   const handleSave = async () => {
     setSaving(true);
     setError(null);
-    const { data: session } = await supabase.auth.getSession();
-    if (!session.session?.user) {
+    const trimmed = username.trim();
+    if (!trimmed) {
       setSaving(false);
       return;
     }
-    const { error: updateError } = await supabase
+    const stored = getStoredProfile();
+    const profile = stored ? { ...stored, username: trimmed } : createProfile(trimmed);
+    const { error } = await supabase
       .from("profiles")
-      .update({ username })
-      .eq("id", session.session.user.id);
-    if (updateError) {
-      setError(updateError.message);
+      .upsert({ id: profile.id, username: profile.username }, { onConflict: "id" });
+    if (error) {
+      setError(error.message);
       setSaving(false);
       return;
     }
+    saveProfile(profile);
     router.replace("/city");
   };
 
@@ -77,7 +68,7 @@ export default function SetupPage() {
         {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
         <button
           onClick={handleSave}
-          disabled={saving || !username}
+          disabled={saving || !username.trim()}
           className="mt-6 w-full rounded-full bg-gradient-to-r from-emerald-400 to-blue-500 px-6 py-3 text-sm font-semibold text-white shadow-glow transition hover:scale-[1.02] disabled:opacity-50"
         >
           {saving ? "Saving..." : "Continue"}
