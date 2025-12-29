@@ -65,7 +65,9 @@ export default function PlayPage() {
     useGeolocationTracking();
   const lastLiveUpdateRef = useRef<number>(0);
 
-  const { territories } = useRealtimeTerritories(city?.id);
+  const { territories } = useRealtimeTerritories(city?.id, (message) => {
+    setStatusMessage(message);
+  });
   const { players } = useLivePlayers(city?.id, liveMode);
   const displayTrailPoints = useMemo(() => points.slice(-500), [points]);
   const lastPoint = points[points.length - 1];

@@ -8,8 +8,11 @@ import type { LivePlayer } from "@/app/hooks/useLivePlayers";
 import type { TrackPoint } from "@/app/hooks/useGeolocationTracking";
 import type { Feature, FeatureCollection, Geometry } from "geojson";
 
-const parseGeoJson = (raw?: string | null) => {
+const parseGeoJson = (raw?: string | Record<string, unknown> | null) => {
   if (!raw) return null;
+  if (typeof raw !== "string") {
+    return raw;
+  }
   try {
     return JSON.parse(raw);
   } catch {
@@ -217,7 +220,7 @@ export const MapView = ({
   const territoryFeatures = useMemo(() => {
     return territories
       .map((territory) => {
-        const geom = parseGeoJson(territory.geom_simplified);
+        const geom = parseGeoJson(territory.geom_geojson);
         if (!geom) return null;
         return {
           type: "Feature",
