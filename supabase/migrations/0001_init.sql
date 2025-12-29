@@ -14,7 +14,7 @@ create table if not exists public.cities (
 
 -- Profiles
 create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
+  id uuid primary key default uuid_generate_v4(),
   username text unique,
   created_at timestamptz default now()
 );
@@ -90,21 +90,6 @@ create table if not exists public.live_players (
 
 create index if not exists live_players_city_idx on public.live_players (city_id);
 
--- Trigger to create profile
-create or replace function public.handle_new_user()
-returns trigger as $$
-begin
-  insert into public.profiles (id, username)
-  values (new.id, null)
-  on conflict do nothing;
-  return new;
-end;
-$$ language plpgsql security definer;
-
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.handle_new_user();
-
 -- RLS
 alter table public.profiles enable row level security;
 alter table public.sessions enable row level security;
@@ -117,50 +102,41 @@ alter table public.claim_events enable row level security;
 create policy "Profiles are viewable" on public.profiles
   for select using (true);
 
-create policy "Profiles are updatable by owner" on public.profiles
-  for update using (auth.uid() = id);
+create policy "Profiles insertable" on public.profiles
+  for insert with check (true);
 
-create policy "Sessions owned by user" on public.sessions
-  for select using (auth.uid() = user_id);
+create policy "Profiles updatable" on public.profiles
+  for update using (true);
 
-create policy "Sessions insert by user" on public.sessions
-  for insert with check (auth.uid() = user_id);
+create policy "Sessions readable" on public.sessions
+  for select using (true);
 
-create policy "Sessions update by user" on public.sessions
-  for update using (auth.uid() = user_id);
+create policy "Sessions insertable" on public.sessions
+  for insert with check (true);
 
-create policy "Session points owned by user" on public.session_points
-  for select using (
-    exists (
-      select 1 from public.sessions
-      where sessions.id = session_points.session_id
-      and sessions.user_id = auth.uid()
-    )
-  );
+create policy "Sessions updatable" on public.sessions
+  for update using (true);
 
-create policy "Session points insert by user" on public.session_points
-  for insert with check (
-    exists (
-      select 1 from public.sessions
-      where sessions.id = session_points.session_id
-      and sessions.user_id = auth.uid()
-    )
-  );
+create policy "Session points readable" on public.session_points
+  for select using (true);
+
+create policy "Session points insertable" on public.session_points
+  for insert with check (true);
 
 create policy "Territories readable" on public.territories
-  for select using (auth.role() = 'authenticated');
+  for select using (true);
 
 create policy "Live players readable" on public.live_players
-  for select using (auth.role() = 'authenticated');
+  for select using (true);
 
-create policy "Live players upsert by owner" on public.live_players
-  for insert with check (auth.uid() = user_id);
+create policy "Live players upsertable" on public.live_players
+  for insert with check (true);
 
-create policy "Live players update by owner" on public.live_players
-  for update using (auth.uid() = user_id);
+create policy "Live players updatable" on public.live_players
+  for update using (true);
 
 create policy "Claim events readable" on public.claim_events
-  for select using (auth.role() = 'authenticated');
+  for select using (true);
 
 -- Claim RPC
 create or replace function public.claim_territory(
@@ -178,24 +154,28 @@ declare
   v_city_lat double precision;
   v_city_lng double precision;
   v_session_mode text;
+  v_session_user uuid;
   v_polygon geometry(MULTIPOLYGON, 4326);
   v_perimeter_m double precision;
   v_min_perimeter double precision;
   v_claim_area double precision;
 begin
-  if auth.uid() is null then
-    raise exception 'Unauthorized';
-  end if;
-
-  if auth.uid() <> p_user_id then
-    raise exception 'User mismatch';
-  end if;
-
   select boundary_geom, center_lat, center_lng
     into v_city_boundary, v_city_lat, v_city_lng
     from public.cities
     where id = p_city_id;
-  select mode into v_session_mode from public.sessions where id = p_session_id;
+  select mode, user_id
+    into v_session_mode, v_session_user
+    from public.sessions
+    where id = p_session_id;
+
+  if v_session_user is null then
+    raise exception 'Session not found';
+  end if;
+
+  if v_session_user <> p_user_id then
+    raise exception 'User mismatch';
+  end if;
 
   if v_city_boundary is null then
     if v_city_lat is null or v_city_lng is null then

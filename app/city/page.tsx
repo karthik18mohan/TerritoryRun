@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getStoredProfile } from "@/app/lib/localProfile";
 import { supabaseBrowser } from "@/app/lib/supabaseClient";
 import { useRouter } from "next/navigation";
 
@@ -19,16 +20,7 @@ export default function CityPage() {
 
   useEffect(() => {
     const load = async () => {
-      const { data: session } = await supabase.auth.getSession();
-      if (!session.session?.user) {
-        router.replace("/login");
-        return;
-      }
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("id", session.session.user.id)
-        .maybeSingle();
+      const profile = getStoredProfile();
       if (!profile?.username) {
         router.replace("/setup");
         return;
