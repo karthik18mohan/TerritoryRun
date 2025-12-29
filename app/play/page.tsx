@@ -69,7 +69,22 @@ export default function PlayPage() {
     setStatusMessage(message);
   });
   const { players } = useLivePlayers(city?.id, liveMode);
-  const displayTrailPoints = useMemo(() => points.slice(-500), [points]);
+  const getBestCoord = useCallback((point: TrackPoint) => {
+    if (point.snappedLat != null && point.snappedLng != null) {
+      return { lat: point.snappedLat, lng: point.snappedLng };
+    }
+    return { lat: point.lat, lng: point.lng };
+  }, []);
+
+  const bestPoints = useMemo(
+    () =>
+      points.map((point) => {
+        const best = getBestCoord(point);
+        return { ...point, lat: best.lat, lng: best.lng };
+      }),
+    [getBestCoord, points]
+  );
+  const displayTrailPoints = useMemo(() => bestPoints.slice(-500), [bestPoints]);
   const lastPoint = points[points.length - 1];
   const lastPointAgeSeconds = lastPoint
     ? Math.max(0, Math.round((Date.now() - new Date(lastPoint.ts).getTime()) / 1000))
@@ -82,15 +97,25 @@ export default function PlayPage() {
     return Math.max(0, Math.round((end - start) / 1000));
   }, [points]);
 
-  const perimeterEstimate = useMemo(() => {
-    if (points.length < 2) return 0;
-    return points.slice(1).reduce((total, point, index) => total + haversineDistance(point, points[index]), 0);
-  }, [points]);
+  const pathLengthM = useMemo(() => {
+    if (bestPoints.length < 2) return 0;
+    return bestPoints
+      .slice(1)
+      .reduce((total, point, index) => total + haversineDistance(point, bestPoints[index]), 0);
+  }, [bestPoints]);
 
   const closeEnough = useMemo(() => {
-    if (points.length < 2) return false;
-    return haversineDistance(points[0], points[points.length - 1]) <= 20;
-  }, [points]);
+    if (bestPoints.length < 2) return false;
+    return haversineDistance(bestPoints[0], bestPoints[bestPoints.length - 1]) <= 20;
+  }, [bestPoints]);
+
+  const perimeterEstimateM = useMemo(() => {
+    if (bestPoints.length < 2) return 0;
+    const closure = closeEnough
+      ? haversineDistance(bestPoints[0], bestPoints[bestPoints.length - 1])
+      : 0;
+    return pathLengthM + closure;
+  }, [bestPoints, closeEnough, pathLengthM]);
 
   const meetsClaimRules = useMemo(() => {
     const minSeconds = 600;
@@ -99,9 +124,9 @@ export default function PlayPage() {
       elapsedSeconds >= minSeconds &&
       points.length >= minPoints &&
       closeEnough &&
-      perimeterEstimate >= MODE_CONFIG[mode].minPerimeter
+      perimeterEstimateM >= MODE_CONFIG[mode].minPerimeter
     );
-  }, [closeEnough, elapsedSeconds, mode, perimeterEstimate, points.length]);
+  }, [closeEnough, elapsedSeconds, mode, perimeterEstimateM, points.length]);
 
   const upsertLive = useCallback(
     async (lastPoint: TrackPoint) => {
@@ -111,7 +136,10 @@ export default function PlayPage() {
       lastLiveUpdateRef.current = now;
       const session = await supabase.auth.getSession();
       if (!session.data.session?.user) return;
-      const trail = points.slice(-50);
+      const trail = points.slice(-50).map((point) => {
+        const best = getBestCoord(point);
+        return { ...point, lat: best.lat, lng: best.lng };
+      });
       const lineWkt = buildLineStringWkt(trail);
 
       await supabase
@@ -126,32 +154,75 @@ export default function PlayPage() {
           last_trail: lineWkt ? `SRID=4326;${lineWkt}` : null
         });
     },
-    [city, liveMode, points, profileUsername, sessionId, supabase]
+    [city, getBestCoord, liveMode, points, profileUsername, sessionId, supabase]
   );
 
-  const insertPoint = useCallback(
+  const [snapError, setSnapError] = useState<string | null>(null);
+  const [pointUpsertError, setPointUpsertError] = useState<string | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+
+  const upsertPoint = useCallback(
     async (point: TrackPoint) => {
       if (!sessionId) return;
-      const { error } = await supabase.from("session_points").insert({
-        session_id: sessionId,
-        ts: point.ts,
-        raw_geom: `SRID=4326;POINT(${point.lng} ${point.lat})`,
-        snapped_geom: point.snappedLat && point.snappedLng ? `SRID=4326;POINT(${point.snappedLng} ${point.snappedLat})` : null,
-        snapped: point.snapped ?? false,
-        accuracy_m: point.accuracy,
-        speed_mps: point.speed ?? null
-      });
+      const { error } = await supabase.from("session_points").upsert(
+        {
+          session_id: sessionId,
+          ts: point.ts,
+          raw_geom: `SRID=4326;POINT(${point.lng} ${point.lat})`,
+          snapped_geom:
+            point.snappedLat && point.snappedLng
+              ? `SRID=4326;POINT(${point.snappedLng} ${point.snappedLat})`
+              : null,
+          snapped: point.snapped ?? false,
+          accuracy_m: point.accuracy,
+          speed_mps: point.speed ?? null
+        },
+        { onConflict: "session_id,ts" }
+      );
       if (error) {
         if (process.env.NODE_ENV !== "production") {
-          console.log("Point insert failed", error);
+          console.log("Point upsert failed", error);
         }
+        setPointUpsertError(error.message);
         const message = error.message.includes("Point outside city boundary")
           ? "Point outside city boundary. Ignored."
           : `Point save failed: ${error.message}`;
         setStatusMessage(message);
+        return;
       }
+      setPointUpsertError(null);
     },
     [sessionId, setStatusMessage, supabase]
+  );
+
+  const upsertSnappedPoints = useCallback(
+    async (snappedPoints: TrackPoint[]) => {
+      if (!sessionId || snappedPoints.length === 0) return;
+      const payload = snappedPoints.map((point) => ({
+        session_id: sessionId,
+        ts: point.ts,
+        raw_geom: `SRID=4326;POINT(${point.lng} ${point.lat})`,
+        snapped_geom:
+          point.snappedLat && point.snappedLng
+            ? `SRID=4326;POINT(${point.snappedLng} ${point.snappedLat})`
+            : null,
+        snapped: point.snapped ?? false,
+        accuracy_m: point.accuracy,
+        speed_mps: point.speed ?? null
+      }));
+      const { error } = await supabase
+        .from("session_points")
+        .upsert(payload, { onConflict: "session_id,ts" });
+      if (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.log("Snapped point upsert failed", error);
+        }
+        setPointUpsertError(error.message);
+        return;
+      }
+      setPointUpsertError(null);
+    },
+    [sessionId, supabase]
   );
 
   const snapBatchRef = useRef<number>(0);
@@ -198,8 +269,8 @@ export default function PlayPage() {
     if (!points.length) return;
     const lastPoint = points[points.length - 1];
     upsertLive(lastPoint);
-    insertPoint(lastPoint);
-  }, [insertPoint, points, status.isTracking, upsertLive]);
+    upsertPoint(lastPoint);
+  }, [points, status.isTracking, upsertLive, upsertPoint]);
 
   useEffect(() => {
     if (!status.isTracking) return;
@@ -209,30 +280,33 @@ export default function PlayPage() {
     const batch = points.slice(-5);
 
     const snap = async () => {
-      const response = await fetch("/api/snap", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ points: batch, mode })
-      });
-      if (!response.ok) return;
-      const data = await response.json();
-      const snappedPoints = data.points as TrackPoint[];
-      setPoints((prev) => {
-        const next = [...prev];
-        snappedPoints.forEach((snappedPoint, index) => {
-          const targetIndex = prev.length - batch.length + index;
-          if (targetIndex >= 0) {
-            next[targetIndex] = { ...next[targetIndex], ...snappedPoint };
-          }
+      try {
+        const response = await fetch("/api/snap", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ points: batch, mode })
         });
-        return next;
-      });
-      setSnappedCount((prev) => prev + snappedPoints.filter((p) => p.snapped).length);
-      setUnsnappedCount((prev) => prev + snappedPoints.filter((p) => !p.snapped).length);
+        if (!response.ok) {
+          setSnapError(`Snap failed (${response.status})`);
+          return;
+        }
+        const data = await response.json();
+        const snappedPoints = data.points as TrackPoint[];
+        setSnapError(data.error ?? null);
+        const snappedMap = new Map(snappedPoints.map((point) => [point.ts, point]));
+        setPoints((prev) =>
+          prev.map((point) => (snappedMap.has(point.ts) ? { ...point, ...snappedMap.get(point.ts) } : point))
+        );
+        setSnappedCount((prev) => prev + snappedPoints.filter((p) => p.snapped).length);
+        setUnsnappedCount((prev) => prev + snappedPoints.filter((p) => !p.snapped).length);
+        await upsertSnappedPoints(snappedPoints);
+      } catch (error) {
+        setSnapError((error as Error).message);
+      }
     };
 
     snap();
-  }, [mode, points, setPoints, status.isTracking]);
+  }, [mode, points, setPoints, status.isTracking, upsertSnappedPoints]);
 
   useEffect(() => {
     setLoopClosed(meetsClaimRules);
@@ -273,8 +347,20 @@ export default function PlayPage() {
     const { data: session } = await supabase.auth.getSession();
     if (!session.session?.user || !city) return;
 
+    if (liveMode) {
+      await supabase
+        .from("live_players")
+        .update({
+          is_live: false,
+          updated_at: new Date().toISOString(),
+          last_ts: new Date().toISOString()
+        })
+        .eq("user_id", session.session.user.id)
+        .eq("city_id", city.id);
+    }
+
     if (meetsClaimRules) {
-      const polygonWkt = buildPolygonWkt(points);
+      const polygonWkt = buildPolygonWkt(bestPoints);
       if (!polygonWkt) {
         setStatusMessage("Need at least 3 points to claim.");
       } else {
@@ -286,10 +372,12 @@ export default function PlayPage() {
         });
         if (claimError) {
           setStatusMessage(claimError.message);
+          setClaimError(claimError.message);
         } else {
           setStatusMessage(
             claimData?.message ?? "Territory claimed! Check the map for updates."
           );
+          setClaimError(null);
         }
       }
     } else {
@@ -301,8 +389,8 @@ export default function PlayPage() {
       .update({
         ended_at: new Date().toISOString(),
         closed_loop: meetsClaimRules,
-        distance_m: perimeterEstimate,
-        perimeter_m: perimeterEstimate
+        distance_m: pathLengthM,
+        perimeter_m: perimeterEstimateM
       })
       .eq("id", sessionId);
 
@@ -407,8 +495,8 @@ export default function PlayPage() {
                 <span>{points.length}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span>Perimeter est.</span>
-                <span>{perimeterEstimate.toFixed(0)} m</span>
+                <span>Path length</span>
+                <span>{pathLengthM.toFixed(0)} m</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>Loop ready</span>
@@ -470,6 +558,9 @@ export default function PlayPage() {
                   </div>
                   <div>Accuracy: {lastPoint?.accuracy ? `${Math.round(lastPoint.accuracy)}m` : "n/a"}</div>
                   <div>Session ID: {sessionId ?? "none"}</div>
+                  <div>Snap error: {snapError ?? "none"}</div>
+                  <div>Point save error: {pointUpsertError ?? "none"}</div>
+                  <div>Claim error: {claimError ?? "none"}</div>
                 </div>
               </div>
             )}

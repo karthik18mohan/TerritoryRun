@@ -20,6 +20,7 @@ type TerritoryRow = {
   geom_geojson: Record<string, unknown> | string | null;
   area_m2: number | null;
   updated_at: string;
+  owner_username: string | null;
 };
 
 export const useRealtimeTerritories = (
@@ -38,9 +39,7 @@ export const useRealtimeTerritories = (
       setLoading(true);
       const { data, error } = await supabase
         .from("v_territories")
-        .select(
-          "id, owner_user_id, city_id, area_m2, updated_at, geom_geojson"
-        )
+        .select("id, owner_user_id, owner_username, city_id, area_m2, updated_at, geom_geojson")
         .eq("city_id", cityId);
       if (!active) return;
       if (error) {
@@ -62,7 +61,7 @@ export const useRealtimeTerritories = (
             geom_geojson,
             area_m2: row.area_m2,
             updated_at: row.updated_at,
-            owner_username: null
+            owner_username: row.owner_username
           };
         }) ?? [];
       setTerritories(mappedTerritories);
@@ -84,7 +83,7 @@ export const useRealtimeTerritories = (
       active = false;
       supabase.removeChannel(channel);
     };
-  }, [cityId]);
+  }, [cityId, setStatusMessage]);
 
   return { territories, loading };
 };
