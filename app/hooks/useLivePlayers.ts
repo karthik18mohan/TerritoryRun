@@ -19,8 +19,13 @@ type LivePlayerRow = {
   username: string;
   is_live: boolean;
   last_ts: string;
-  last_point: string | null | { last_point: string | null }[];
-  last_trail: string | null | { last_trail: string | null }[];
+  last_point_geojson: string | Record<string, unknown> | null;
+  last_trail_geojson: string | Record<string, unknown> | null;
+};
+
+const normalizeGeoJson = (value: string | Record<string, unknown> | null) => {
+  if (!value) return null;
+  return typeof value === "string" ? value : JSON.stringify(value);
 };
 
 export const useLivePlayers = (cityId?: string, enabled?: boolean) => {
@@ -33,28 +38,22 @@ export const useLivePlayers = (cityId?: string, enabled?: boolean) => {
 
     const load = async () => {
       const { data } = await supabase
-        .from("live_players")
+        .from("v_live_players_active")
         .select(
-          "user_id, city_id, username, is_live, last_ts, last_point:st_asgeojson(last_point), last_trail:st_asgeojson(last_trail)"
+          "user_id, city_id, username, is_live, last_ts, last_point_geojson, last_trail_geojson"
         )
         .eq("city_id", cityId)
         .eq("is_live", true);
       if (!active) return;
       const mapped = (data ?? []).map((row: LivePlayerRow): LivePlayer => {
-        const last_point = Array.isArray(row.last_point)
-          ? row.last_point[0]?.last_point ?? null
-          : row.last_point ?? null;
-        const last_trail = Array.isArray(row.last_trail)
-          ? row.last_trail[0]?.last_trail ?? null
-          : row.last_trail ?? null;
         return {
           user_id: row.user_id,
           city_id: row.city_id,
           username: row.username,
           is_live: row.is_live,
           last_ts: row.last_ts,
-          last_point,
-          last_trail
+          last_point: normalizeGeoJson(row.last_point_geojson),
+          last_trail: normalizeGeoJson(row.last_trail_geojson)
         };
       });
       setPlayers(mapped);

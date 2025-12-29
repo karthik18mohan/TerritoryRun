@@ -303,7 +303,10 @@ export const MapView = ({
       )}
       {mapError && (
         <div className="absolute right-4 top-4 z-10 rounded-full bg-amber-500/80 px-4 py-2 text-[10px] text-white">
-          Map error{process.env.NODE_ENV !== "production" ? `: ${mapError}` : ""}
+          Map error
+          {process.env.NODE_ENV !== "production"
+            ? ` (${styleOption}): ${mapError}`
+            : ""}
         </div>
       )}
       <div ref={containerRef} className="h-full w-full" />
